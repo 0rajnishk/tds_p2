@@ -4,7 +4,8 @@
 #   "pandas",
 #   "seaborn",
 #   "matplotlib",
-#   "requests"
+#   "requests",
+#   "scikit-learn"
 # ]
 # ///
 
@@ -15,6 +16,8 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 import requests
 import json
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
 
 def get_api_details():
     """
@@ -28,38 +31,78 @@ def get_api_details():
     api_proxy_url = "https://aiproxy.sanand.workers.dev/openai/v1/chat/completions"
     return api_proxy_token, api_proxy_url
 
+def detect_encoding(file_path):
+    """
+    Detects the encoding of a file using chardet.
+    """
+    try:
+        import chardet
+    except ImportError:
+        print("chardet library not found. Installing...")
+        os.system("pip install chardet")
+        import chardet
+    
+    with open(file_path, 'rb') as f:
+        result = chardet.detect(f.read())
+    return result['encoding']
+
 def analyze_dataset(file_path):
     """
-    Loads the dataset with appropriate encoding and performs basic analysis.
+    Loads the dataset with appropriate encoding and performs basic and advanced analysis.
     Returns the DataFrame and a dictionary containing analysis details.
     """
-    # Attempt multiple encodings to handle different CSV formats
-    encodings_to_try = ['utf-8', 'latin-1', 'cp1252']
-    for enc in encodings_to_try:
-        try:
-            df = pd.read_csv(file_path, encoding=enc)
-            print(f"Successfully loaded {file_path} with encoding {enc}")
-            break
-        except UnicodeDecodeError:
-            print(f"Failed to decode {file_path} with encoding {enc}")
-            continue
-    else:
-        print(f"Error: Unable to decode the CSV file {file_path} with tried encodings.")
+    # Detect encoding
+    encoding = detect_encoding(file_path)
+    try:
+        df = pd.read_csv(file_path, encoding=encoding)
+        print(f"Successfully loaded {file_path} with encoding {encoding}")
+    except Exception as e:
+        print(f"Error loading {file_path}: {e}")
         sys.exit(1)
     
-    # Perform generic analysis
+    # Basic Analysis
     try:
         summary_stats = df.describe(include='all').to_dict()
     except Exception as e:
         print(f"Warning: Unable to generate summary statistics for {file_path}. {e}")
         summary_stats = {}
     
+    missing_values = df.isnull().sum().to_dict()
+    dtypes = df.dtypes.apply(str).to_dict()
+    columns = list(df.columns)
+    
     analysis = {
-        "columns": list(df.columns),
-        "dtypes": df.dtypes.apply(str).to_dict(),
-        "missing_values": df.isnull().sum().to_dict(),
+        "columns": columns,
+        "dtypes": dtypes,
+        "missing_values": missing_values,
         "summary_stats": summary_stats
     }
+    
+    # Advanced Analysis: Outlier Detection
+    numeric_cols = df.select_dtypes(include=['number']).columns
+    outliers = {}
+    for col in numeric_cols:
+        Q1 = df[col].quantile(0.25)
+        Q3 = df[col].quantile(0.75)
+        IQR = Q3 - Q1
+        lower_bound = Q1 - 1.5 * IQR
+        upper_bound = Q3 + 1.5 * IQR
+        outlier_count = df[(df[col] < lower_bound) | (df[col] > upper_bound)].shape[0]
+        outliers[col] = outlier_count
+    
+    analysis["outliers"] = outliers
+    
+    # Clustering (if applicable)
+    if len(numeric_cols) >= 2:
+        scaler = StandardScaler()
+        scaled_data = scaler.fit_transform(df[numeric_cols].dropna())
+        kmeans = KMeans(n_clusters=3, random_state=42)
+        clusters = kmeans.fit_predict(scaled_data)
+        df['Cluster'] = clusters
+        cluster_counts = df['Cluster'].value_counts().to_dict()
+        analysis["clusters"] = cluster_counts
+    else:
+        analysis["clusters"] = "Not enough numeric columns for clustering."
     
     return df, analysis
 
@@ -74,7 +117,7 @@ def generate_visualizations(df, output_dir):
     numeric_columns = df.select_dtypes(include='number').columns
     if len(numeric_columns) > 1:
         corr = df[numeric_columns].corr()
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(12, 10))
         sns.heatmap(corr, annot=True, cmap="coolwarm", fmt=".2f")
         plt.title("Correlation Heatmap")
         heatmap_path = os.path.join(output_dir, "correlation_heatmap.png")
@@ -86,9 +129,11 @@ def generate_visualizations(df, output_dir):
     # 2. Distribution Plot of the First Numeric Column
     if len(numeric_columns) > 0:
         first_numeric = numeric_columns[0]
-        plt.figure(figsize=(8, 6))
+        plt.figure(figsize=(10, 6))
         sns.histplot(df[first_numeric].dropna(), kde=True, bins=30, color='skyblue')
         plt.title(f"Distribution of {first_numeric}")
+        plt.xlabel(first_numeric)
+        plt.ylabel("Frequency")
         dist_path = os.path.join(output_dir, f"{first_numeric}_distribution.png")
         plt.savefig(dist_path)
         plt.close()
@@ -99,7 +144,7 @@ def generate_visualizations(df, output_dir):
     categorical_columns = df.select_dtypes(include=['object', 'category']).columns
     if len(categorical_columns) > 0:
         first_categorical = categorical_columns[0]
-        plt.figure(figsize=(10, 6))
+        plt.figure(figsize=(12, 8))
         sns.countplot(
             data=df,
             y=first_categorical,
@@ -120,6 +165,18 @@ def generate_visualizations(df, output_dir):
     
     return png_files
 
+def suggest_additional_analyses(analysis):
+    """
+    Uses the LLM to suggest additional analyses based on the current analysis.
+    Returns a list of suggested analyses.
+    """
+    suggestions = []
+    if analysis["outliers"]:
+        suggestions.append("Performing outlier detection to identify anomalies in the data.")
+    if analysis["clusters"] and isinstance(analysis["clusters"], dict):
+        suggestions.append("Conducting clustering analysis to find natural groupings within the data.")
+    return suggestions
+
 def narrate_story(analysis, png_files, api_proxy_token, api_proxy_url):
     """
     Generates a narrative in Markdown format using the LLM based on the analysis.
@@ -127,21 +184,23 @@ def narrate_story(analysis, png_files, api_proxy_token, api_proxy_url):
     """
     # Create a concise summary to send to the LLM
     analysis_summary = (
-        f"Columns: {analysis['columns']}\n"
-        f"Data Types: {analysis['dtypes']}\n"
-        f"Missing Values: {analysis['missing_values']}\n"
+        f"**Columns:** {analysis['columns']}\n"
+        f"**Data Types:** {analysis['dtypes']}\n"
+        f"**Missing Values:** {analysis['missing_values']}\n"
+        f"**Summary Statistics:** {list(analysis['summary_stats'].keys())}\n"
+        f"**Outliers Detected:** {analysis['outliers']}\n"
+        f"**Clustering Results:** {analysis['clusters']}\n"
     )
-    if analysis['summary_stats']:
-        analysis_summary += f"Summary Statistics: {list(analysis['summary_stats'].keys())}\n"
     
     # Define the prompt for the LLM
     prompt = (
-        "You are a data scientist. Given the analysis below, write a brief, clear narrative in Markdown format. "
-        "1. Describe the dataset and its structure.\n"
-        "2. Summarize the key insights and interesting findings.\n"
-        "3. Mention the generated charts and what they show.\n"
-        "4. Discuss potential implications or actions.\n"
-        "Analysis:\n" + analysis_summary
+        "You are a data scientist. Based on the analysis provided below, write a detailed narrative in Markdown format that includes:\n"
+        "1. A brief description of the dataset and its structure.\n"
+        "2. Key insights and interesting findings.\n"
+        "3. Descriptions of the generated charts and their significance.\n"
+        "4. Potential implications or recommended actions based on the findings.\n"
+        "5. Suggestions for additional analyses that could provide further insights.\n\n"
+        f"**Analysis:**\n{analysis_summary}"
     )
     
     # Prepare the payload for the AI Proxy
@@ -151,7 +210,7 @@ def narrate_story(analysis, png_files, api_proxy_token, api_proxy_url):
             {"role": "system", "content": "You are a helpful data scientist narrating the story of a dataset."},
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 1000,
+        "max_tokens": 1500,
         "temperature": 0.7
     }
     
