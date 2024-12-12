@@ -214,14 +214,17 @@ def narrate_story(analysis, png_files, api_proxy_token, api_proxy_url):
     
     # Define the prompt for the LLM
     prompt = (
-        "You are a data scientist. Based on the analysis provided below, write a detailed narrative in Markdown format that includes:\n"
-        "1. A brief description of the dataset and its structure.\n"
-        "2. Key insights and interesting findings.\n"
-        "3. Descriptions of the generated charts and their significance.\n"
-        "4. Potential implications or recommended actions based on the findings.\n"
-        "5. Suggestions for additional analyses that could provide further insights.\n\n"
-        f"**Analysis:**\n{analysis_summary}"
-    )
+    "You are an advanced data scientist with expertise in data analysis and visualization. Based on the comprehensive analysis provided below, generate a detailed narrative in Markdown format that includes:\n"
+    "1. **Dataset Overview:** A thorough description of the dataset, its source, and its structure.\n"
+    "2. **Key Insights:** Highlight the most significant findings and trends observed in the data.\n"
+    "3. **Visualization Interpretations:** Provide in-depth explanations of each generated chart, discussing what they reveal about the data.\n"
+    "4. **Implications and Recommendations:** Discuss the potential implications of the findings and offer actionable recommendations.\n"
+    "5. **Dynamic Analysis Suggestions:** Propose three additional analyses or visualizations that could further enhance the understanding of the dataset.\n"
+    "6. **Vision Agentic Enhancements:** Suggest ways to integrate visual analysis or image-based insights to complement the current findings.\n\n"
+    f"**Comprehensive Analysis:**\n{analysis_summary}"
+)
+
+
     
     # Prepare the payload for the AI Proxy
     payload = {
@@ -263,9 +266,10 @@ def narrate_story(analysis, png_files, api_proxy_token, api_proxy_url):
     
     # Suggest Additional Analyses
     suggestion_prompt = (
-        "Based on the following narrative and analysis, suggest three additional analyses or visualizations that could provide further insights.\n\n"
-        f"**Narrative:**\n{story}"
-    )
+    "Based on the narrative and analysis provided below, suggest three innovative analyses or visualizations that could offer deeper insights or uncover hidden patterns in the dataset. Additionally, recommend how visual (image-based) analysis techniques could be integrated to enhance the overall understanding.\n\n"
+    f"**Narrative and Analysis:**\n{story}"
+)
+
     
     suggestion_payload = {
         "model": "gpt-4o-mini",
